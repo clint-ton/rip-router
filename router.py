@@ -79,8 +79,6 @@ def checkPorts(port, outputPorts, inputPorts):
 
 
 def sendUpdate(updatePeriod, updateTimer, routerId, inputSockets, outputPorts, flag=False):
-    print(time.time())
-    print(updatePeriod)
     if time.time() >= updatePeriod:
         updatePeriod = resetUpdateTimer(updateTimer)
         print("Router ID:", routerId)
@@ -130,7 +128,7 @@ def create_sockets(input_ports):
             print("Error opening a socket on port " + port)
     return input_sockets
 
-def create_update_packet(self, sender_id, dest_id, routing_table, triggered_update=False):
+def create_update_packet(sender_id, dest_id, routing_table, triggered_update=False):
     packet = bytearray()
     packet.append(COMMAND.to_bytes(1, 'big')[0])
     packet.append(VERSION.to_bytes(1, 'big')[0])
@@ -139,12 +137,12 @@ def create_update_packet(self, sender_id, dest_id, routing_table, triggered_upda
     for byte in sender_id_bytes:
         packet.append(byte)
 
-    for key, value in self.routing_table.items():
+    for key, value in routing_table.items():
        if triggered_update:
             if value["infiniteRouteFlag"]:
-                self.create_route_entry(routing_table, packet, dest_id, key)
+                create_route_entry(routing_table, packet, dest_id, key)
             else:
-                self.create_route_entry(routing_table, packet, dest_id, key)
+                create_route_entry(routing_table, packet, dest_id, key)
 
     return packet
 
