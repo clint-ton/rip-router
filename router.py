@@ -4,15 +4,7 @@ import sys
 import select
 from copy import deepcopy
 
-# constants
-COMMAND = 2
-VERSION = 2
-TIMEOUT = 0
-
-# globals
-routing_table = {}
-
-def readConfig(filename):
+def read_config(filename):
     file = open(filename, "r")
     lines = file.readlines()
     for i in range(len(lines)-1):
@@ -20,7 +12,6 @@ def readConfig(filename):
     routerId, inputPorts, outputPorts, timerValues = extractConfig(lines)
     file.close()
     return (routerId, inputPorts, outputPorts, timerValues)
-
 
 def extractConfig(lines):
     inputPorts = []
@@ -47,7 +38,7 @@ def extractConfig(lines):
             for port in lines[line][1:]:
                 outputPort = []
                 port = port.split("-")
-                if checkPorts(port, outputPorts, inputPorts):
+                if check_ports(port, outputPorts, inputPorts):
                         for i in port:
                             outputPort.append(int(i))
                 outputPorts.append(outputPort)
@@ -63,11 +54,7 @@ def extractConfig(lines):
     if(timerValues == []): timerValues = [30, 80, 120]
     return (routerId, inputPorts, outputPorts, timerValues)
 
-
-def resetUpdateTimer(updateTimer):
-    return time.time() + updateTimer
-
-def checkPorts(port, outputPorts, inputPorts):
+def check_ports(port, outputPorts, inputPorts):
     if(len(port) == 3 and int(port[0]) not in inputPorts and 1 <= int(port[2]) <= 64000 and 1 <= int(port[1]) <= 15 and 1024 <= int(port[0]) <= 64000):
         if len(outputPorts) > 0:
             for i in outputPorts:
@@ -76,224 +63,236 @@ def checkPorts(port, outputPorts, inputPorts):
         else: return True
     else: raise Exception("Output ports incorrectly specified")
 
+class Router:
+    def __init__(self, config_file):
+        # router constants
+        self.BUFFER_SIZE = 1024
+        # initialize nessecary variables
+        self.routing_table = {}
+        self.queue = []
+        self.router_id, self.input_ports, self.output_ports, self.timer_values = read_config(config_file)
+        self.update_timer, self.timeout_timer, self.garbage_timer = self.timer_values
+        self.reset_update_timer()
+        self.input_sockets = self.create_sockets(self.input_ports)
+        self.output_socket = [self.input_sockets[0]]
 
-def sendUpdate(updatePeriod, updateTimer, routerId, inputSockets, outputPorts, flag=False):
-    if time.time() >= updatePeriod:
-        updatePeriod = resetUpdateTimer(updateTimer)
-        print("Router ID:", routerId)
-        printTable()
-        for socket in inputSockets:
-            for port in outputPorts:
-                updatePacket = create_update_packet(routerId, port[2], routing_table, flag)
-                inputSockets[socket].sendto(updatePacket, ('localhost', port[0]))
+        # print out config info
+        print("Router ID:", self.router_id)
+        print("Input Ports:", end=" ")
+        for i in self.input_ports: print(i, end=", ")
+        print()
+        print("Output Ports:", end=" ")
+        for i in self.output_ports: print(i, end=", ")
+        print()
+        print("Timer Values:", self.timer_values)
 
-def running(current_id, queue, updatePeriod, updateTimer, inputSockets, outputSocket):
-    while True:
-        read, write, special = select.select(inputSockets, outputSocket, [])
+        while True:
+            self.tick()
+    
+    def create_sockets(self, input_ports):
+        input_sockets = []
+        for port in input_ports:
+            try:
+                UDP_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
+                UDP_socket.bind(('localhost', port))
+                input_sockets.append(UDP_socket)
+            except:
+                print("Error opening a socket on port " + str(port))
+                sys.exit()
+        return input_sockets
+
+    def reset_update_timer(self):
+        self.next_update = time.time() + self.update_timer
+
+    def reset_timeout(self, router_id):
+        self.routing_table[router_id]["timeout"] = time.time() + self.timeout_timer
+        self.routing_table[router_id]["garbage"] = False
+
+    def set_garbage_timer(self, router_id):
+        self.routing_table[router_id]["metric"] = 16
+        self.routing_table[router_id]["garbage"] = True
+        self.routing_table[router_id]["timeout"] = time.time() + self.garbage_timer
+
+    def check_timeout(self, router_id):
+        # if the garbage flag is true
+        if self.routing_table[router_id]["garbage"]:
+            # if timer has gone off
+            if time.time() >= self.routing_table[router_id]["timeout"]:
+                # delete the entry 
+                del(self.routing_table[routerId])
+        else:
+            # timer has gone off
+            if time.time() >= self.routing_table[router_id]["timeout"]:
+                self.set_garbage_timer(router_id)
+    
+    def send_update(self, triggered_update_flag):
+        self.reset_update_timer()
+        print("Router ID:", self.router_id)
+        self.print_table()
+        for port in self.output_ports:
+            update_packet = self.create_update_packet(port[2], triggered_update_flag)
+            self.output_socket[0].sendto(update_packet, ('localhost', port[0]))
+
+    def tick(self):
+        read, write, special = select.select(self.input_sockets, self.output_socket, [])
         for i in read:
             try:
-                data, addr = i.recvfrom(BUFFER_SIZE)
-                queue.append((data, addr))
+                data, addr = i.recvfrom(self.BUFFER_SIZE)
+                self.queue.append((data, addr))
             except:
-                # print("Error recieving a packet")
-                buffer = 0
-        
-        sendUpdate(updatePeriod, updateTimer, current_id, inputSockets, outputSocket)
-        
-        for message in queue:
-            data, addr = queue.pop(0)
+                print("Error recieving a packet")
+
+        if time.time() >= self.next_update:
+            self.send_update(triggered_update_flag=False)
+                
+        for message in self.queue:
+            data, addr = self.queue.pop(0)
             port = addr[1]
-            processPacket(port, data, timeoutTimer, garbageTimer, outputPorts, routerId)
+            self.process_packet(port, data)
 
-        sendTriggeredUpdate = False
-        for route in routing_table:
-            if(routing_table[i]["infiniteRouteFlag"] == True):
-                sendUpdate(updatePeriod, updateTimer, routerId, inputSockets, outputPorts, True)
-                for i in routing_table: routing_table[i]["infiniteRouteFlag"] = False
+        triggered_update = False
+        for route in self.routing_table:
+            if(self.routing_table[route]["deleted_route"] == True):
+                triggered_update = True
+        if triggered_update:
+            self.send_update(True)
+            for i in self.routing_table: self.routing_table[route]["deleted_route"] = False
 
-        for entry in deepcopy(routing_table):
-            checkTimeout(entry, timeoutTimer, garbageTimer)
+        for entry in deepcopy(self.routing_table):
+            self.check_timeout(entry)
 
-        printTable()    
-
-def create_sockets(input_ports):
-    input_sockets = []
-    for port in input_ports:
-        try:
-            UDP_socket = socket.socket(family=socket.AF_INET, type=socket.SOCK_DGRAM)
-            UDP_socket.bind(('localhost', port))
-            input_sockets.append(UDP_socket)
-        except:
-            print("Error opening a socket on port " + port)
-    return input_sockets
-
-def create_update_packet(sender_id, dest_id, routing_table, triggered_update=False):
-    packet = bytearray()
-    packet.append(COMMAND.to_bytes(1, 'big')[0])
-    packet.append(VERSION.to_bytes(1, 'big')[0])
-    sender_id_bytes = sender_id.to_bytes(2, 'big')
-
-    for byte in sender_id_bytes:
-        packet.append(byte)
-
-    for key, value in routing_table.items():
-       if triggered_update:
-            if value["infiniteRouteFlag"]:
-                create_route_entry(routing_table, packet, dest_id, key)
-            else:
-                create_route_entry(routing_table, packet, dest_id, key)
-
-    return packet
-
-def createRouteEntry(routing_table, packet, dest_id, route_id):
-    AFI = 2
-    AFIBytes = AFI.to_bytes(2, 'big')
-    for i in AFIBytes: packet.append(i)
-    for i in range(0, 2): packet.append(0x00)
-    routeDestBytes = routeEntry.to_bytes(4, 'big')
-    for i in routeDestBytes: packet.append(i)
-    for i in range(0, 8): packet.append(0x00)
-    # split horizon with poison reverse
-    if(routing_table[routeEntry]["next_hop_id"] == dest_id):
-        metric = 16
-        metricBytes = metric.to_bytes(4, 'big')
-    else:
-        metricBytes = routingTable[routeEntry]["metric"].to_bytes(4, 'big')
-    for i in metricBytes: packet.append(i)
-
-
-def create_table_entry(router_id, metric, next_hop_id, next_hop):
-    data = {
-        "metric" : metric,
-        "next_hop": next_hop,
-       "next_hopId": next_hop_id,
-        "timeout" : time.time() + self.timeout_timer,
-        "garbage" : False,
-        "infinite_route_flag" : False
-    }
-
-    routing_table[routerId] = data
-
-def process_packet(packet, sender_port, current_router_id):
-    # exit discard packet if not valid
-    if not checkPacket(packet):
-        return
-    entry_count = int((len(packet) - 4) / 20)
-    entries = packet[4:]
-
-    sender_id = int.from_bytes(packet[2:4], 'big')
-
-    for neighbour_port, neighbour_metric, neighbour_id in neighbours:
-       if(sender_id == neighbour_id):
-            sender_metric = neighbour_metric
-
-    if sender_id not in routing_table.keys():
-        createTableEntry(sender_id, sender_metric, sender_id, sender_port)
-    else:
-        for neighbour_port, neighbour_metric, neighbour_id in neighbours:
-            if sender_id == neighbour_id and neighbour_metric < routing_table[sender_id]['metric']:
-                routing_table[sender_id]['next_hop'] = neighbour_port
-                routing_table[sender_id]['metric'] = neighbour_metric
-                routing_table[sender_id]['next_hop_id'] = neighbour_id
-        routing_table[sender_id]['garbage'] = False
-        resetTimeout(sender_id, timeout)
-
-    for i in range(entry_count):
-        # TODO split up
-        dest = bytearray()
-        metric = bytearray()
-
-        for j in range(4, 8):
-            destination.append(entries[20 * i + j])
-        for j in range(16, 20):
-            metric.append(entries[20 * i + j])
     
-        destination = int.from_bytes(destination, "big")
-        metric = int.from_bytes(metric, "big")
+    def create_update_packet(self, destination_id, triggered_update=False):
+        packet = bytearray()
+        COMMAND = 2
+        VERSION = 2
+        packet.append(COMMAND.to_bytes(1, 'big')[0])
+        packet.append(VERSION.to_bytes(1, 'big')[0])
+        sender_id_bytes = self.router_id.to_bytes(2, 'big')
 
-        distance = sender_metric 
+        for byte in sender_id_bytes:
+            packet.append(byte)
 
-        if destination in self.routing_table.keys():
-            if distance < routing_table[destination]["metric"] or routing_table[destination]["nextHopId"] == senderId:
-                routing_table[destination]["infinite_route_flag"] = False
-                routing_table[destination]["metric"] = distance
-                routing_table[destination]["next_hop_id"] = senderId
-                routing_table[destination]["next_hop"] = senderPort
-            
-            if(distance < 16 and routing_table[destination]["nextHopId"] == senderId):
-                resetTimeout(destination, timeoutTimer)
-                routing_table[destination]["garbage"] = False
-            
-        elif(destination != currentRouterId and not distance > 15):
-            createTableEntry(destination, distance, senderId, senderPort, timeoutTimer)
+        for link, data in self.routing_table.items():
+            if triggered_update:
+                if data["route_changed"]:
+                    self.create_rip_entry(packet, link, destination_id)
+            else:
+                self.create_rip_entry(packet, link, destination_id)
 
-        if destination!= current_router_id:
-            if routing_table[destination]["metric"] > 15:
-                routing_table[destination]["metric"] = 16
-                routing_table[destination]["infiniteRouteFlag"] = True                
-                if(routing_table[destination]["garbage"] == False):
-                    setGarbage(destination, garbageTimer)
+        return packet
 
-def printTable():
-    print(  " +-------------+--------+----------+-------------+---------+---------+---------------------+\n",
+    def create_rip_entry(self, packet, route_id, destination_id):
+        AFI = 2
+        AFI_bytes = AFI.to_bytes(2, 'big')
+        for i in AFI_bytes: packet.append(i)
+        for i in range(0, 2): packet.append(0x00)
+        route_id_bytes = route_id.to_bytes(4, 'big')
+        for i in route_id_bytes: packet.append(i)
+        for i in range(0, 8): packet.append(0x00)
+        # split horizon with poison reverse
+        if(self.routing_table[route_id]["next_hop_id"] == destination_id):
+            metric = 16
+        else:
+            metric = self.routing_table[route_id]["metric"]
+
+        metric_bytes = metric.to_bytes(4, 'big')
+        for i in metric_bytes: packet.append(i)
+
+
+    def print_table(self):
+        print(  " +-------------+--------+----------+-------------+---------+---------+---------------------+\n",
             "| Destination | Metric | Next Hop | Next Hop ID | Timeout | Garbage | Infinite Route Flag |\n",
             "+-------------+--------+----------+-------------+---------+---------+---------------------+")
-    # copy table so it cant update during print
-    copied_table = deepcopy(routing_table)
-    for link in copied_table:
-        data = copied_table[link]
-        timeout = int(data["timeout"] - time.time())
-        if data["garbage"]:
-            garbage = timeout
-            timeout = '-'
+        # copy table so it cant update during print
+        copied_table = deepcopy(self.routing_table)
+        for link in copied_table:
+            data = copied_table[link]
+            timeout = int(data["timeout"] - time.time())
+            if data["garbage"]:
+                garbage = timeout
+                timeout = '-'
+            else:
+                garbage = '-'
+            if not data["deleted_route"]:
+                deleted_route = "Not Set"
+            else:
+                deleted_route = "Set"
+            print(" |{0:^13}|{1:^8}|{2:^10}|{3:^13}|{4:^9}|{5:^9}|{6:^21}|".format(link, data["metric"], data["next_hop"], data["next_hop_id"], timeout, garbage, deleted_route))
+        print(" +-------------+--------+----------+-------------+---------+---------+---------------------+")
+    
+    def check_packet(self, packet):
+        # TODO Packet checking
+        return True
+
+    def create_table_entry(self, router_id, metric, next_hop_id, next_hop):
+        data = {
+            "metric" : metric,
+            "next_hop": next_hop,
+            "next_hop_id": next_hop_id,
+            "timeout" : time.time() + self.timeout_timer,
+            "garbage" : False,
+            "deleted_route" : False
+        }
+
+        self.routing_table[router_id] = data
+
+    def process_packet(self, sender_port, packet):
+        # exit discard packet if not valid
+        if not self.check_packet(packet):
+            return
+        entry_count = int((len(packet) - 4) / 20)
+        entries = packet[4:]
+
+        sender_id = int.from_bytes(packet[2:4], 'big')
+
+        for neighbour_port, neighbour_metric, neighbour_id in self.output_ports:
+           if(sender_id == neighbour_id):
+                sender_metric = neighbour_metric
+
+        if sender_id not in self.routing_table.keys():
+            self.create_table_entry(sender_id, sender_metric, sender_id, sender_port)
         else:
-            garbage = '-'
-        if not data["infiniteRouteFlag"]:
-            infiniteRouteFlag = "Not Set"
-        else:
-            infiniteRouteFlag = "Set"
-        print(" |{0:^13}|{1:^8}|{2:^10}|{3:^13}|{4:^9}|{5:^9}|{6:^21}|".format(link, data["metric"], data["nextHop"], data["nextHopId"], timeout, garbage, infiniteRouteFlag))
-    print(" +-------------+--------+----------+-------------+---------+---------+---------------------+")
-    
-def main():
+            for neighbour_port, neighbour_metric, neighbour_id in self.output_ports:
+                if sender_id == neighbour_id and neighbour_metric < self.routing_table[sender_id]['metric']:
+                    self.routing_table[sender_id]['next_hop'] = neighbour_port
+                    self.routing_table[sender_id]['metric'] = neighbour_metric
+                    self.routing_table[sender_id]['next_hop_id'] = neighbour_id
+            self.reset_timeout(sender_id)
 
-    routerId, inputPorts, outputPorts, timerValues = readConfig(sys.argv[1])
-    print("Router ID:", routerId)
-    print("Input Ports:", end=" ")
-    for i in inputPorts: print(i, end=", ")
-    print()
-    print("Output Ports:", end=" ")
-    for i in outputPorts: print(i, end=", ")
-    print()
-    print("Timer Values:", timerValues)
+        for i in range(entry_count):
+            # TODO split up
+            destination = bytearray()
+            metric = bytearray()
 
-    
-    inputSockets = create_sockets(inputPorts)
-    outputSocket = [inputSockets[0]]
-    updateTimer, timeoutTimer, garbageTimer = timerValues
-    update_period = resetUpdateTimer(updateTimer)
-    queue = []
-    # TODO maybe dont need to pass through timers?
-    running(routerId, queue, update_period, updateTimer, inputSockets, outputSocket)
-    
+            for j in range(4, 8):
+                destination.append(entries[20 * i + j])
+            for j in range(16, 20):
+                metric.append(entries[20 * i + j])
 
+            destination = int.from_bytes(destination, "big")
+            metric = int.from_bytes(metric, "big")
 
-if __name__ == '__main__':
-    main()
+            distance = sender_metric + metric
 
+            if destination in self.routing_table.keys():
+                if distance < self.routing_table[destination]["metric"] or self.routing_table[destination]["next_hop_id"] == sender_id:
+                    self.routing_table[destination]["metric"] = distance
+                    self.routing_table[destination]["next_hop_id"] = sender_id
+                    self.routing_table[destination]["next_hop"] = sender_port
+            
+                if(distance < 16 and self.routing_table[destination]["next_hop_id"] == sender_id):
+                    self.reset_timeout(destination)
+            
+            elif(destination != self.router_id and not distance > 15):
+                self.create_table_entry(destination, distance, sender_id, sender_port)
 
-
-
-
-
-
-
-
+            if destination!= self.router_id:
+                if self.routing_table[destination]["metric"] > 15:
+                    self.routing_table[destination]["metric"] = 16
+                    self.routing_table[destination]["deleted_route"] = True                
+                    if(self.routing_table[destination]["garbage"] == False):
+                        self.set_garbage_timer(destination)
 
 
-
-
-
-
-
-
+my_router = Router(sys.argv[1])
