@@ -28,13 +28,14 @@ def extractConfig(lines):
     timerValues = []
     routerId = 0    
     line = 0
-    while line < (len(lines) - 1):
+    while line < (len(lines)):
         lines[line] = lines[line].strip()
         lines[line] = lines[line].split()
-        if(lines[line][0] == "router-id" and int(lines[line][1]) <= 64000 and len(lines[line]) == 2):
-            if(int(lines[line][1]) <= 64000 and len(lines[line]) == 2):
+        if((lines[line][0]) == "router-id"):
+            if(1 <= int(lines[line][1]) <= 64000 and len(lines[line]) == 2):
                 routerId = int(lines[line][1])
-            else: raise Exception("Router-id incorrectly specified")
+            else: 
+                raise Exception("Router-id incorrectly specified")
             
         if(lines[line][0] == "input-ports"):
             for port in lines[line][1:]:
@@ -50,20 +51,18 @@ def extractConfig(lines):
                         for i in port:
                             outputPort.append(int(i))
                 outputPorts.append(outputPort)
-                
+
         if(lines[line][0] == "timer-values"):
             timerVals = lines[line][1].split("-")
-            if(timerValues[1] / timerValues[0] == 6 and timerValues[2] / timerValues[0] == 4 and len(timerValues) == 3):
+            if(int(timerVals[1]) / int(timerVals[0]) == 6 and int(timerVals[2]) / int(timerVals[0]) == 4 and len(timerVals) == 3):
                 for time in timerVals:
                     timerValues.append(int(time))
             else:
                 timerValues = [30, 80, 120]
-        else:
-            timerValues = [30, 80, 120]
-                
         line += 1
-
+    if(timerValues == []): timerValues = [30, 80, 120]
     return (routerId, inputPorts, outputPorts, timerValues)
+
 
 def resetUpdateTimer(updateTimer):
     return time.time() + updateTimer
