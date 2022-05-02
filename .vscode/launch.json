@@ -11,7 +11,7 @@
       "program": "${file}",
       "console": "integratedTerminal",
       "justMyCode": true,
-      "args": ["config1.txt"]
+      "args": ["config4.txt"]
     }
   ]
 }

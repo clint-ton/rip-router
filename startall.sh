@@ -1,0 +1,7 @@
+gnome-terminal -e "python3 router.py config1.txt" 
+gnome-terminal -e "python3 router.py config2.txt" 
+gnome-terminal -e "python3 router.py config3.txt" 
+gnome-terminal -e "python3 router.py config4.txt" 
+gnome-terminal -e "python3 router.py config5.txt"
+gnome-terminal -e "python3 router.py config6.txt"
+gnome-terminal -e "python3 router.py config7.txt"

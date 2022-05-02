@@ -75,6 +75,7 @@ class Router:
         self.reset_update_timer()
         self.input_sockets = self.create_sockets(self.input_ports)
         self.output_socket = [self.input_sockets[0]]
+        self.last_triggered_update = time.time()
 
         # print out config info
         print("Router ID:", self.router_id)
@@ -112,6 +113,7 @@ class Router:
         self.routing_table[router_id]["metric"] = 16
         self.routing_table[router_id]["garbage"] = True
         self.routing_table[router_id]["timeout"] = time.time() + self.garbage_timer
+        
 
     def check_timeout(self, router_id):
         # if the garbage flag is true
@@ -119,7 +121,7 @@ class Router:
             # if timer has gone off
             if time.time() >= self.routing_table[router_id]["timeout"]:
                 # delete the entry 
-                del(self.routing_table[routerId])
+                del(self.routing_table[router_id])
         else:
             # timer has gone off
             if time.time() >= self.routing_table[router_id]["timeout"]:
@@ -127,8 +129,12 @@ class Router:
     
     def send_update(self, triggered_update_flag):
         self.reset_update_timer()
-        print("Router ID:", self.router_id)
-        self.print_table()
+        if triggered_update_flag:
+            # dont send an update if one has been sent in the last 5 seconds
+            if not time.time() >= self.last_triggered_update + 5:
+                return
+            else: 
+                self.last_triggered_update = time.time()
         for port in self.output_ports:
             update_packet = self.create_update_packet(port[2], triggered_update_flag)
             self.output_socket[0].sendto(update_packet, ('localhost', port[0]))
@@ -143,6 +149,8 @@ class Router:
                 print("Error recieving a packet")
 
         if time.time() >= self.next_update:
+            print("Router ID:", self.router_id)
+            self.print_table()
             self.send_update(triggered_update_flag=False)
                 
         for message in self.queue:
@@ -175,7 +183,7 @@ class Router:
 
         for link, data in self.routing_table.items():
             if triggered_update:
-                if data["route_changed"]:
+                if data["deleted_route"]:
                     self.create_rip_entry(packet, link, destination_id)
             else:
                 self.create_rip_entry(packet, link, destination_id)
@@ -222,8 +230,19 @@ class Router:
         print(" +-------------+--------+----------+-------------+---------+---------+---------------------+")
     
     def check_packet(self, packet):
-        # TODO Packet checking
+        entry_count = int((len(packet) - 4) / 20)
+        if packet[0] != 2 and packet[1] != 2:
+            return False
+        entries = packet[4:]
+        for i in range(entry_count):
+            metric = bytearray()
+            for j in range(16, 20):
+                metric.append(entries[20 * i + j])
+            metric = int.from_bytes(metric, "big")
+            if metric < 1 or metric > 16:
+                return False
         return True
+        
 
     def create_table_entry(self, router_id, metric, next_hop_id, next_hop):
         data = {
@@ -246,14 +265,17 @@ class Router:
 
         sender_id = int.from_bytes(packet[2:4], 'big')
 
+        # lookup sender metric
         for neighbour_port, neighbour_metric, neighbour_id in self.output_ports:
            if(sender_id == neighbour_id):
                 sender_metric = neighbour_metric
 
+        # if no entry exists create one with given info
         if sender_id not in self.routing_table.keys():
             self.create_table_entry(sender_id, sender_metric, sender_id, sender_port)
         else:
             for neighbour_port, neighbour_metric, neighbour_id in self.output_ports:
+                # if you are hearing from a neighbour, and you have a better metric for them, use it, as you have heard directly from them
                 if sender_id == neighbour_id and neighbour_metric < self.routing_table[sender_id]['metric']:
                     self.routing_table[sender_id]['next_hop'] = neighbour_port
                     self.routing_table[sender_id]['metric'] = neighbour_metric
@@ -276,23 +298,26 @@ class Router:
             distance = sender_metric + metric
 
             if destination in self.routing_table.keys():
+                # if distance better than current metric, or packet comes from a router along the route
                 if distance < self.routing_table[destination]["metric"] or self.routing_table[destination]["next_hop_id"] == sender_id:
                     self.routing_table[destination]["metric"] = distance
                     self.routing_table[destination]["next_hop_id"] = sender_id
                     self.routing_table[destination]["next_hop"] = sender_port
-            
+                # if metric is worse, reset timer anyway TODO may need to do this above as well?
                 if(distance < 16 and self.routing_table[destination]["next_hop_id"] == sender_id):
                     self.reset_timeout(destination)
-            
+            # if advertisment for a router you have not seen, create an entry
             elif(destination != self.router_id and not distance > 15):
                 self.create_table_entry(destination, distance, sender_id, sender_port)
 
-            if destination!= self.router_id:
+            # set route changed flag for destination if infinite metric
+            try:
                 if self.routing_table[destination]["metric"] > 15:
                     self.routing_table[destination]["metric"] = 16
-                    self.routing_table[destination]["deleted_route"] = True                
                     if(self.routing_table[destination]["garbage"] == False):
                         self.set_garbage_timer(destination)
+            except:
+                continue
 
 
 my_router = Router(sys.argv[1])
