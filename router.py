@@ -209,9 +209,9 @@ class Router:
 
 
     def print_table(self):
-        print(  " +-------------+--------+----------+-------------+---------+---------+---------------------+\n",
-            "| Destination | Metric | Next Hop | Next Hop ID | Timeout | Garbage | Infinite Route Flag |\n",
-            "+-------------+--------+----------+-------------+---------+---------+---------------------+")
+        print(  " +-------------+--------+----------+-------------+---------+---------+\n",
+            "| Destination | Metric | Next Hop | Next Hop ID | Timeout | Garbage |\n",
+            "+-------------+--------+----------+-------------+---------+---------+")
         # copy table so it cant update during print
         copied_table = deepcopy(self.routing_table)
         for link in copied_table:
@@ -222,12 +222,8 @@ class Router:
                 timeout = '-'
             else:
                 garbage = '-'
-            if not data["deleted_route"]:
-                deleted_route = "Not Set"
-            else:
-                deleted_route = "Set"
-            print(" |{0:^13}|{1:^8}|{2:^10}|{3:^13}|{4:^9}|{5:^9}|{6:^21}|".format(link, data["metric"], data["next_hop"], data["next_hop_id"], timeout, garbage, deleted_route))
-        print(" +-------------+--------+----------+-------------+---------+---------+---------------------+")
+            print(" |{0:^13}|{1:^8}|{2:^10}|{3:^13}|{4:^9}|{5:^9}|".format(link, data["metric"], data["next_hop"], data["next_hop_id"], timeout, garbage))
+        print(" +-------------+--------+----------+-------------+---------+---------+")
     
     def check_packet(self, packet):
         entry_count = int((len(packet) - 4) / 20)
