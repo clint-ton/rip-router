@@ -4,65 +4,111 @@ import sys
 import select
 from copy import deepcopy
 
+'''
+Authors: Robert Dumbleton, Clinton Walker
+Date:    02/05/2022
+Description: This is a router program that impletments the RIPv2 routing protocol
+'''
+
+
 def read_config(filename):
+    ''' Reads the lines from the context file and discards any empty lines'''
     file = open(filename, "r")
-    lines = file.readlines()
-    for i in range(len(lines)-1):
-        lines[i] = lines[i].strip()
+    data = file.readlines()
+    lines = []
+    for i in range(len(data)-1):
+        #ignore any blank lines in the file
+        if(len(data[i].strip()) >= 1):
+            lines.append(data[i].strip())
     routerId, inputPorts, outputPorts, timerValues = extractConfig(lines)
     file.close()
     return (routerId, inputPorts, outputPorts, timerValues)
 
 def extractConfig(lines):
+    ''' Takes lines from read_config and extracts all of the necessary values for the router to function
+        if no timer values are detected or are seen as errornous then the default vales 30,180,120 will be given'''
     inputPorts = []
     outputPorts = []
     timerValues = []
     routerId = 0    
     line = 0
+    #Loop through each line of the read config
     while line < (len(lines)):
         lines[line] = lines[line].strip()
         lines[line] = lines[line].split()
+        #if a router-id decleration is found, check if the following value is correct
         if((lines[line][0]) == "router-id"):
-            if(1 <= int(lines[line][1]) <= 64000 and len(lines[line]) == 2):
-                routerId = int(lines[line][1])
-            else: 
+            try:
+                if(1 <= int(lines[line][1]) <= 64000 and len(lines[line]) == 2):
+                    routerId = int(lines[line][1])
+                else:
+                    raise Exception("Router-id not in expected range 1-64000 or too many values provided")
+            except:
                 raise Exception("Router-id incorrectly specified")
-            
+        
+        #if an imput-ports decleration is found, check if the following values are correct
         if(lines[line][0] == "input-ports"):
-            for port in lines[line][1:]:
-                if(1024 <= int(port) <= 64000 and int(port) not in inputPorts):
-                    inputPorts.append(int(port))
-                else: raise Exception("Input ports specified incorrectly")
+            try:
+                #exclude the 'input-ports' decleration to isolate the needed values
+                for port in lines[line][1:]:
+                    if(1024 <= int(port) <= 64000 and int(port) not in inputPorts):
+                        #if the given port is correct add it to the list
+                        inputPorts.append(int(port))
+                    else: raise Exception("Input-ports incorrectly specified")
+            except:
+                raise Exception("Input-ports incorrectly specified")
 
+        #if an outputs decleration is found, check if the following values are correct
         if(lines[line][0] == "outputs"):
-            for port in lines[line][1:]:
-                outputPort = []
-                port = port.split("-")
-                if check_ports(port, outputPorts, inputPorts):
-                        for i in port:
-                            outputPort.append(int(i))
-                outputPorts.append(outputPort)
-
+            try:
+                #exclude the 'outputs' decleration to isolate the needed values
+                for port in lines[line][1:]:
+                    outputPort = []
+                    port = port.split("-")
+                    #send the port to check_ports to ensure the given port is not in use somewhere else
+                    if check_ports(port, outputPorts, inputPorts):
+                            for i in port:
+                                outputPort.append(int(i))
+                    outputPorts.append(outputPort)
+            except:
+                raise Exception("Output-ports incorrectly specified")
+                
+        #if a timer-values decleration is found, check if the following values are correct
         if(lines[line][0] == "timer-values"):
-            timerVals = lines[line][1].split("-")
-            if(int(timerVals[1]) / int(timerVals[0]) == 6 and int(timerVals[2]) / int(timerVals[0]) == 4 and len(timerVals) == 3):
-                for time in timerVals:
-                    timerValues.append(int(time))
-            else:
-                timerValues = [30, 80, 120]
+            try:
+                timerVals = lines[line][1].split("-")
+                if(int(timerVals[1]) / int(timerVals[0]) == 6 and int(timerVals[2]) / int(timerVals[0]) == 4 and len(timerVals) == 3):
+                    for time in timerVals:
+                        timerValues.append(int(time))
+                else:
+                    timerValues = [30, 80, 120]
+            except:
+                pass
+            
         line += 1
+    #if 'timer-values' was missing from the config file then default to timing [30, 180, 120]
     if(timerValues == []): timerValues = [30, 80, 120]
     return (routerId, inputPorts, outputPorts, timerValues)
 
-def check_ports(port, outputPorts, inputPorts):
-    if(len(port) == 3 and int(port[0]) not in inputPorts and 1 <= int(port[2]) <= 64000 and 1 <= int(port[1]) <= 15 and 1024 <= int(port[0]) <= 64000):
-        if len(outputPorts) > 0:
-            for i in outputPorts:
-                if i[0] == int(port[0]): raise Exception("Output ports incorrectly specified")
-                else: return True
-        else: return True
-    else: raise Exception("Output ports incorrectly specified")
 
+def check_ports(port, outputPorts, inputPorts):
+    '''Checks the values of the given output port'''
+    try:
+        #check the port doesnt exist in inputPorts
+        if(len(port) == 3 and int(port[0]) not in inputPorts):
+            #check the port numbers are within range
+            if (1 <= int(port[2]) <= 64000 and 1 <= int(port[1]) <= 15 and 1024 <= int(port[0]) <= 64000):
+                #check the port does not exist in outputPorts
+                if len(outputPorts) > 0:
+                    for i in outputPorts:
+                        if i[0] == int(port[0]): raise Exception("Output ports incorrectly specified")
+                        else: return True
+                #if outputPorts is empty then there wont be a conflict
+                else: return True
+    except:
+        raise Exception("Output ports incorrectly specified")
+        
+        
 class Router:
     def __init__(self, config_file):
         # router constants
